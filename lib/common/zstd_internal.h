@@ -222,9 +222,69 @@ void ZSTD_wildcopy(void* dst, const void* src, size_t length, ZSTD_overlap_e con
 
     if (ovtype == ZSTD_overlap_src_before_dst && diff < WILDCOPY_VECLEN) {
         /* Handle short offset copies. */
+#if defined(ZSTD_ARCH_X86_SSSE3)
+        /* The source and destination overlap with period `diff` (1 <= diff < 16).
+         * Build one 16-byte register holding the repeating pattern, then store 16
+         * bytes per iteration (vs 8 with COPY8), advancing the pattern with a single
+         * `pshufb` (`_mm_shuffle_epi8`) table lookup and no load inside the loop.
+         *   init[diff][j] = j % diff        : build the pattern from a 16-byte load
+         *   adv[diff][j]  = (16 + j) % diff : shift the pattern forward by 16 bytes
+         * Each iteration stores WILDCOPY_VECLEN (16) bytes and stops as soon as
+         * `op >= oend`, so it overruns the logical end by at most WILDCOPY_VECLEN-1
+         * (15) bytes. Callers guarantee WILDCOPY_OVERLENGTH (32) bytes of slack
+         * past `oend`, so the overrun is always in bounds. */
+        ZSTD_STATIC_ASSERT(WILDCOPY_VECLEN - 1 <= WILDCOPY_OVERLENGTH);
+        static const uint8_t init[16][16] = {
+            { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+            { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+            { 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1},
+            { 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0},
+            { 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3},
+            { 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0},
+            { 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3},
+            { 0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0, 1},
+            { 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7},
+            { 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6},
+            { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5},
+            { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10, 0, 1, 2, 3, 4},
+            { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11, 0, 1, 2, 3},
+            { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12, 0, 1, 2},
+            { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13, 0, 1},
+            { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14, 0},
+        };
+        static const uint8_t adv[16][16] = {
+            { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+            { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+            { 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1},
+            { 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1},
+            { 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3},
+            { 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1},
+            { 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1},
+            { 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3},
+            { 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7},
+            { 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4},
+            { 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1},
+            { 5, 6, 7, 8, 9,10, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
+            { 4, 5, 6, 7, 8, 9,10,11, 0, 1, 2, 3, 4, 5, 6, 7},
+            { 3, 4, 5, 6, 7, 8, 9,10,11,12, 0, 1, 2, 3, 4, 5},
+            { 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13, 0, 1, 2, 3},
+            { 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14, 0, 1},
+        };
+        /* `pshufb` selects byte `index[j]` of the input for each output lane `j`;
+         * all indices are < diff <= 15, so they stay in range. */
+        __m128i pattern = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)ip),
+                                           _mm_loadu_si128((const __m128i*)init[diff]));
+        __m128i const advance = _mm_loadu_si128((const __m128i*)adv[diff]);
+        do {
+            _mm_storeu_si128((__m128i*)op, pattern);
+            pattern = _mm_shuffle_epi8(pattern, advance);
+            op += 16;
+        } while (op < oend);
+#else
         do {
             COPY8(op, ip);
         } while (op < oend);
+#endif
     } else {
         assert(diff >= WILDCOPY_VECLEN || diff <= -WILDCOPY_VECLEN);
         /* Separate out the first COPY16() call because the copy length is
