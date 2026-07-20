@@ -167,7 +167,9 @@ static UNUSED_ATTR const U32 OF_defaultNormLog = OF_DEFAULTNORMLOG;
 /*-*******************************************
 *  Shared functions to include for inlining
 *********************************************/
-static void ZSTD_copy8(void* dst, const void* src) {
+/* UNUSED_ATTR because the vectorized ZSTD_wildcopy short-offset path removes
+ * the COPY8 reference, leaving ZSTD_copy8 unused in most translation units. */
+static UNUSED_ATTR void ZSTD_copy8(void* dst, const void* src) {
 #if defined(ZSTD_ARCH_ARM_NEON)
     vst1_u8((uint8_t*)dst, vld1_u8((const uint8_t*)src));
 #else
@@ -232,8 +234,8 @@ void ZSTD_wildcopy(void* dst, const void* src, size_t length, ZSTD_overlap_e con
          * Each iteration stores WILDCOPY_VECLEN (16) bytes and stops as soon as
          * `op >= oend`, so it overruns the logical end by at most WILDCOPY_VECLEN-1
          * (15) bytes. Callers guarantee WILDCOPY_OVERLENGTH (32) bytes of slack
-         * past `oend`, so the overrun is always in bounds. */
-        ZSTD_STATIC_ASSERT(WILDCOPY_VECLEN - 1 <= WILDCOPY_OVERLENGTH);
+         * past `oend`, so the overrun is always in bounds
+         * (see the ZSTD_STATIC_ASSERT below the tables). */
         static const uint8_t init[16][16] = {
             { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
             { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -273,6 +275,7 @@ void ZSTD_wildcopy(void* dst, const void* src, size_t length, ZSTD_overlap_e con
 #if defined(ZSTD_ARCH_ARM_NEON)
         uint8x16_t pattern = vqtbl1q_u8(vld1q_u8((const uint8_t*)ip), vld1q_u8(init[diff]));
         uint8x16_t const advance = vld1q_u8(adv[diff]);
+        ZSTD_STATIC_ASSERT(WILDCOPY_VECLEN - 1 <= WILDCOPY_OVERLENGTH);
         do {
             vst1q_u8((uint8_t*)op, pattern);
             pattern = vqtbl1q_u8(pattern, advance);
@@ -280,12 +283,16 @@ void ZSTD_wildcopy(void* dst, const void* src, size_t length, ZSTD_overlap_e con
         } while (op < oend);
 #else
         /* `pshufb` selects byte `index[j]` of the input for each output lane `j`;
-         * all indices are < diff <= 15, so they stay in range. */
-        __m128i pattern = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)ip),
-                                           _mm_loadu_si128((const __m128i*)init[diff]));
-        __m128i const advance = _mm_loadu_si128((const __m128i*)adv[diff]);
+         * all indices are < diff <= 15, so they stay in range.
+         * The casts go through `void*` because `_mm_loadu_si128`/`_mm_storeu_si128`
+         * do unaligned accesses, but a direct `BYTE*` -> `__m128i*` cast trips
+         * -Wcast-align. */
+        __m128i pattern = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)(const void*)ip),
+                                           _mm_loadu_si128((const __m128i*)(const void*)init[diff]));
+        __m128i const advance = _mm_loadu_si128((const __m128i*)(const void*)adv[diff]);
+        ZSTD_STATIC_ASSERT(WILDCOPY_VECLEN - 1 <= WILDCOPY_OVERLENGTH);
         do {
-            _mm_storeu_si128((__m128i*)op, pattern);
+            _mm_storeu_si128((__m128i*)(void*)op, pattern);
             pattern = _mm_shuffle_epi8(pattern, advance);
             op += 16;
         } while (op < oend);
