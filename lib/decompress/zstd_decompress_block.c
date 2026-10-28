@@ -1235,7 +1235,8 @@ typedef enum { ZSTD_lo_isRegularOffset, ZSTD_lo_isLongOffset=1 } ZSTD_longOffset
 FORCE_INLINE_TEMPLATE seq_t
 ZSTD_decodeSequence(seqState_t* seqState, const ZSTD_longOffset_e longOffsets, const int isLastSeq)
 {
-    seq_t seq;
+    /* All three fields are set below. */
+    ZSTD_UNINITIALIZED seq_t seq;
     /*
      * ZSTD_seqSymbol is a 64 bits wide structure.
      * It can be loaded in one operation
@@ -1424,7 +1425,8 @@ ZSTD_decompressSequences_bodySplitLitBuffer( ZSTD_DCtx* dctx,
 
     /* Literals are split between internal buffer & output buffer */
     if (nbSeq) {
-        seqState_t seqState;
+        /* Every member is set below, before the first read. */
+        ZSTD_UNINITIALIZED seqState_t seqState;
         dctx->fseEntropy = 1;
         { U32 i; for (i=0; i<ZSTD_REP_NUM; i++) seqState.prevOffset[i] = dctx->entropy.rep[i]; }
         RETURN_ERROR_IF(
@@ -1567,7 +1569,8 @@ ZSTD_decompressSequences_bodySplitLitBuffer( ZSTD_DCtx* dctx,
 #endif
 
             for ( ; nbSeq ; nbSeq--) {
-                seq_t const sequence = ZSTD_decodeSequence(&seqState, isLongOffset, nbSeq==1);
+                /* Fully written by ZSTD_decodeSequence(). */
+                ZSTD_UNINITIALIZED seq_t const sequence = ZSTD_decodeSequence(&seqState, isLongOffset, nbSeq==1);
                 size_t const oneSeqSize = ZSTD_execSequence(op, oend, sequence, &litPtr, litBufferEnd, prefixStart, vBase, dictEnd);
 #if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION) && defined(FUZZING_ASSERT_VALID_SEQUENCE)
                 assert(!ZSTD_isError(oneSeqSize));
@@ -1637,7 +1640,8 @@ ZSTD_decompressSequences_body(ZSTD_DCtx* dctx,
 
     /* Regen sequences */
     if (nbSeq) {
-        seqState_t seqState;
+        /* Every member is set below, before the first read. */
+        ZSTD_UNINITIALIZED seqState_t seqState;
         dctx->fseEntropy = 1;
         { U32 i; for (i = 0; i < ZSTD_REP_NUM; i++) seqState.prevOffset[i] = dctx->entropy.rep[i]; }
         RETURN_ERROR_IF(
@@ -1758,9 +1762,11 @@ ZSTD_decompressSequencesLong_body(
 #define STORED_SEQS 8
 #define STORED_SEQS_MASK (STORED_SEQS-1)
 #define ADVANCED_SEQS STORED_SEQS
-        seq_t sequences[STORED_SEQS];
+        /* Each slot is read only after the sequence it holds has been decoded into it. */
+        ZSTD_UNINITIALIZED seq_t sequences[STORED_SEQS];
         int const seqAdvance = MIN(nbSeq, ADVANCED_SEQS);
-        seqState_t seqState;
+        /* Every member is set below, before the first read. */
+        ZSTD_UNINITIALIZED seqState_t seqState;
         int seqNb;
         size_t prefetchPos = (size_t)(op-prefixStart); /* track position relative to prefixStart */
 
