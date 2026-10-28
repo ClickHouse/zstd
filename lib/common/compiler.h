@@ -343,6 +343,18 @@ MEM_STATIC int ZSTD_isPower2(size_t u) {
 #endif
 
 /**
+ * Excludes a local variable from -ftrivial-auto-var-init.
+ * Only for hot locals whose every byte is written before it is read.
+ */
+#ifndef ZSTD_UNINITIALIZED
+#  if __has_attribute(uninitialized)
+#    define ZSTD_UNINITIALIZED __attribute__((uninitialized))
+#  else
+#    define ZSTD_UNINITIALIZED
+#  endif
+#endif
+
+/**
  * Helper function to perform a wrapped pointer difference without triggering
  * UBSAN.
  *
